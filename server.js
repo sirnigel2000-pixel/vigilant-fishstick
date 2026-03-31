@@ -9,7 +9,7 @@
  */
 
 const express = require('express');
-const fetch = require('node-fetch');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -112,21 +112,40 @@ async function exchangeCodeForTokens(code, verifier) {
     client_id: CLIENT_ID,
     client_secret: CLIENT_SECRET,
     code_verifier: verifier
+  }).toString();
+
+  return new Promise((resolve, reject) => {
+    const url = new URL(TOKEN_URL);
+    const options = {
+      hostname: url.hostname,
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          return reject(new Error(`Canva token endpoint responded ${res.statusCode}: ${data}`));
+        }
+        try {
+          const parsed = JSON.parse(data);
+          resolve({ ...parsed, obtained_at: Date.now() });
+        } catch (e) {
+          reject(new Error(`Failed to parse token response: ${data}`));
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.write(body);
+    req.end();
   });
-
-  const response = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Canva token endpoint responded ${response.status}: ${text}`);
-  }
-
-  const data = await response.json();
-  return { ...data, obtained_at: Date.now() };
 }
 
 function saveTokens(tokens) {
